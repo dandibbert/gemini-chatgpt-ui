@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gemini-chatgpt-ui
 // @namespace    https://github.com/dandibbert/gemini-chatgpt-ui
-// @version      0.2.1
+// @version      0.2.2
 // @description  Restyle Google Gemini web UI to look and feel like ChatGPT (clean layout, typography, 768px column, compact bubbles, ChatGPT sidebar & composer, dark/light support)
 // @author       dandibbert
 // @match        https://gemini.google.com/*
@@ -348,6 +348,42 @@ top-bar-actions {
 /* ==========================================================================
    Chat Conversation Column & Turns
    ========================================================================== */
+/* In-flow ChatGPT layout when conversation exists: prevents composer from ever overlapping responses */
+.chat-container:has(.conversation-container) {
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+.chat-container:has(.conversation-container) .chat-history-scroll-container {
+  box-sizing: border-box !important;
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
+.chat-container:has(.conversation-container) infinite-scroller.chat-history {
+  box-sizing: border-box !important;
+  height: 100% !important;
+  flex: 1 1 auto !important;
+  padding-top: 56px !important;
+  padding-bottom: 28px !important;
+}
+
+.chat-container:has(.conversation-container) input-container {
+  position: relative !important;
+  top: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  right: auto !important;
+  width: 100% !important;
+  flex: 0 0 auto !important;
+  background: var(--cg-bg-main) !important;
+  padding-top: 10px !important;
+  z-index: 10 !important;
+}
+
 infinite-scroller.chat-history {
   padding-top: 56px !important;
   padding-bottom: 140px !important;
