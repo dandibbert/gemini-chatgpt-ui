@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gemini-chatgpt-ui
 // @namespace    https://github.com/dandibbert/gemini-chatgpt-ui
-// @version      0.2.2
+// @version      0.2.3
 // @description  Restyle Google Gemini web UI to look and feel like ChatGPT (clean layout, typography, 768px column, compact bubbles, ChatGPT sidebar & composer, dark/light support)
 // @author       dandibbert
 // @match        https://gemini.google.com/*
@@ -750,6 +750,31 @@ input-area-v2 .text-input-field,
 input-area-v2 fieldset.input-area-fieldset {
   background: transparent !important;
   padding-inline: 10px !important;
+}
+
+/* Composer & Sent Image Attachment Previews (clear border for white screenshots + safe stacking) */
+input-area-v2 .attachment-preview-wrapper {
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+}
+input-area-v2 gem-media-attachment.lm-enabled mat-basic-chip {
+  border-radius: 14px !important;
+  border: 1px solid var(--cg-border-strong) !important;
+  background-color: var(--cg-bg-bubble) !important;
+  isolation: isolate !important;
+}
+input-area-v2 gem-media-attachment.lm-enabled .gem-attachment-style-img {
+  z-index: 0 !important;
+  border-radius: 13px !important;
+}
+input-area-v2 gem-media-attachment.lm-enabled .gem-attachment-content {
+  z-index: 2 !important;
+}
+user-query-file-preview .preview-image-button,
+.file-preview-container .preview-image-button {
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  border: 1px solid var(--cg-border) !important;
 }
 
 input-area-v2 .ql-editor {
