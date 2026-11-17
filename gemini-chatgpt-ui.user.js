@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gemini-chatgpt-ui
 // @namespace    https://github.com/dandibbert/gemini-chatgpt-ui
-// @version      0.2.0
+// @version      0.2.1
 // @description  Restyle Google Gemini web UI to look and feel like ChatGPT (clean layout, typography, 768px column, compact bubbles, ChatGPT sidebar & composer, dark/light support)
 // @author       dandibbert
 // @match        https://gemini.google.com/*
@@ -487,6 +487,14 @@ code-block,
   border: 1px solid var(--cg-border) !important;
   background-color: var(--cg-bg-code) !important;
   overflow: hidden !important;
+  margin: 14px 0 !important;
+}
+code-block .formatted-code-block-internal-container {
+  background-color: var(--cg-bg-code) !important;
+  border-radius: 12px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  color: var(--cg-text) !important;
 }
 code-block .code-block-decoration,
 code-block .header-formatted {
@@ -494,14 +502,121 @@ code-block .header-formatted {
   border-bottom: 1px solid var(--cg-border) !important;
   font-family: var(--cg-font-sans) !important;
   font-size: 12px !important;
+  font-weight: 500 !important;
+  color: var(--cg-text-muted) !important;
+  padding: 4px 12px 4px 16px !important;
+  min-height: 36px !important;
+  height: auto !important;
+}
+code-block .code-block-decoration > span,
+code-block .code-block-decoration .buttons,
+code-block .code-block-decoration .buttons button,
+code-block .code-block-decoration .buttons mat-icon {
   color: var(--cg-text-muted) !important;
 }
-code-block pre,
-code-block code {
+code-block .code-block-decoration .buttons button:hover,
+code-block .code-block-decoration .buttons button:hover mat-icon {
+  color: var(--cg-text) !important;
+}
+code-block pre {
+  background-color: var(--cg-bg-code) !important;
+  color: var(--cg-text) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+code-block code,
+code-block code.code-container {
   font-family: var(--cg-font-mono) !important;
   font-size: 13.5px !important;
   line-height: 1.55 !important;
   background-color: var(--cg-bg-code) !important;
+  color: var(--cg-text) !important;
+  padding: 14px 16px !important;
+  display: block !important;
+  overflow-x: auto !important;
+}
+
+/* Syntax highlighting tuned for Light & Dark ChatGPT code blocks */
+body.light-theme code-block .hljs,
+body.light-theme code-block .hljs-subst,
+body.light-theme code-block .hljs-function,
+body.light-theme code-block .hljs-params,
+body.light-theme code-block .hljs-punctuation,
+body.light-theme code-block .hljs-operator {
+  color: #24292f !important;
+}
+body.light-theme code-block .hljs-comment,
+body.light-theme code-block .hljs-quote {
+  color: #6e7781 !important;
+}
+body.light-theme code-block .hljs-keyword,
+body.light-theme code-block .hljs-selector-tag,
+body.light-theme code-block .hljs-type,
+body.light-theme code-block .hljs-meta {
+  color: #cf222e !important;
+}
+body.light-theme code-block .hljs-string,
+body.light-theme code-block .hljs-doctag,
+body.light-theme code-block .hljs-regexp {
+  color: #0a3069 !important;
+}
+body.light-theme code-block .hljs-title,
+body.light-theme code-block .hljs-section,
+body.light-theme code-block .hljs-selector-id,
+body.light-theme code-block .hljs-selector-class {
+  color: #8250df !important;
+}
+body.light-theme code-block .hljs-number,
+body.light-theme code-block .hljs-literal,
+body.light-theme code-block .hljs-variable,
+body.light-theme code-block .hljs-template-variable,
+body.light-theme code-block .hljs-attr,
+body.light-theme code-block .hljs-attribute,
+body.light-theme code-block .hljs-built_in {
+  color: #0550ae !important;
+}
+body.light-theme code-block .hljs-property {
+  color: #953800 !important;
+}
+
+body.dark-theme code-block .hljs,
+body.dark-theme code-block .hljs-subst,
+body.dark-theme code-block .hljs-function,
+body.dark-theme code-block .hljs-params {
+  color: #ececec !important;
+}
+body.dark-theme code-block .hljs-comment,
+body.dark-theme code-block .hljs-quote {
+  color: #8e8e8e !important;
+}
+body.dark-theme code-block .hljs-keyword,
+body.dark-theme code-block .hljs-selector-tag,
+body.dark-theme code-block .hljs-meta {
+  color: #df3079 !important;
+}
+body.dark-theme code-block .hljs-string,
+body.dark-theme code-block .hljs-doctag {
+  color: #00a67d !important;
+}
+body.dark-theme code-block .hljs-title,
+body.dark-theme code-block .hljs-section,
+body.dark-theme code-block .hljs-selector-class {
+  color: #d2a8ff !important;
+}
+body.dark-theme code-block .hljs-number,
+body.dark-theme code-block .hljs-literal,
+body.dark-theme code-block .hljs-attr,
+body.dark-theme code-block .hljs-variable,
+body.dark-theme code-block .hljs-built_in {
+  color: #e9950c !important;
+}
+
+/* Clean Markdown links (remove dashed Gemini underlines) */
+.markdown-main-panel a:not(.mat-mdc-button-base) {
+  text-decoration: underline !important;
+  text-decoration-style: solid !important;
+  text-underline-offset: 3px !important;
+  text-decoration-thickness: 1px !important;
 }
 
 /* Tables */
