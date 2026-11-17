@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gemini-chatgpt-ui
 // @namespace    https://github.com/dandibbert/gemini-chatgpt-ui
-// @version      0.2.3
+// @version      0.2.4
 // @description  Restyle Google Gemini web UI to look and feel like ChatGPT (clean layout, typography, 768px column, compact bubbles, ChatGPT sidebar & composer, dark/light support)
 // @author       dandibbert
 // @match        https://gemini.google.com/*
@@ -252,10 +252,11 @@ bard-sidenav mat-action-list.desktop-controls {
    Sticky Minimal ChatGPT Top Header Bar
    ========================================================================== */
 #${HEADER_ID} {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
-  right: 0;
+  width: 100%;
+  box-sizing: border-box;
   height: 52px;
   padding: 0 56px 0 18px;
   display: flex;
@@ -757,17 +758,18 @@ input-area-v2 .attachment-preview-wrapper {
   overflow-x: auto !important;
   overflow-y: visible !important;
 }
-input-area-v2 gem-media-attachment.lm-enabled mat-basic-chip {
+input-area-v2 gem-media-attachment mat-basic-chip {
   border-radius: 14px !important;
-  border: 1px solid var(--cg-border-strong) !important;
+  border: none !important;
+  box-shadow: 0 0 0 1px var(--cg-border-strong) !important;
   background-color: var(--cg-bg-bubble) !important;
   isolation: isolate !important;
 }
-input-area-v2 gem-media-attachment.lm-enabled .gem-attachment-style-img {
+input-area-v2 gem-media-attachment .gem-attachment-style-img {
   z-index: 0 !important;
-  border-radius: 13px !important;
+  border-radius: 14px !important;
 }
-input-area-v2 gem-media-attachment.lm-enabled .gem-attachment-content {
+input-area-v2 gem-media-attachment .gem-attachment-content {
   z-index: 2 !important;
 }
 user-query-file-preview .preview-image-button,
@@ -883,7 +885,14 @@ back-to-bottom-fab button.back-to-bottom-fab {
 
     const topBar = document.querySelector("top-bar-actions");
     const topBarW = topBar ? Math.ceil(topBar.getBoundingClientRect().width) : 48;
-    header.style.paddingRight = `${Math.max(56, topBarW + 18)}px`;
+
+    const chatWin = document.querySelector("chat-window");
+    if (chatWin) {
+      const rect = chatWin.getBoundingClientRect();
+      header.style.left = `${Math.round(rect.left)}px`;
+      header.style.width = `${Math.max(200, Math.round(rect.width) - topBarW - 10)}px`;
+    }
+    header.style.paddingRight = "10px";
 
     const rawTitle = document.title.replace(/\s*[-–|]\s*Google Gemini$/i, "").trim();
     const titleEl = header.querySelector(".cg-chat-title");
@@ -907,11 +916,13 @@ back-to-bottom-fab button.back-to-bottom-fab {
   }
 
   let observedTopBar = null;
+  let observedChatWin = null;
   let topBarObserver = null;
+  let resizeBound = false;
 
   function ensureHeader() {
     const chatWin = document.querySelector("chat-window");
-    if (!chatWin) return;
+    if (!chatWin || !document.body) return;
     let header = document.getElementById(HEADER_ID);
     if (!header) {
       header = buildEl("div");
@@ -971,18 +982,28 @@ back-to-bottom-fab button.back-to-bottom-fab {
           syncHeader(header);
         }
       });
-      chatWin.appendChild(header);
+      document.body.appendChild(header);
+    }
+
+    if (!resizeBound) {
+      resizeBound = true;
+      window.addEventListener("resize", () => {
+        const h = document.getElementById(HEADER_ID);
+        if (h) syncHeader(h);
+      });
     }
 
     const topBar = document.querySelector("top-bar-actions");
-    if (topBar && topBar !== observedTopBar && typeof ResizeObserver !== "undefined") {
+    if ((topBar !== observedTopBar || chatWin !== observedChatWin) && typeof ResizeObserver !== "undefined") {
       observedTopBar = topBar;
+      observedChatWin = chatWin;
       topBarObserver?.disconnect();
       topBarObserver = new ResizeObserver(() => {
         const h = document.getElementById(HEADER_ID);
         if (h) syncHeader(h);
       });
-      topBarObserver.observe(topBar);
+      if (topBar) topBarObserver.observe(topBar);
+      topBarObserver.observe(chatWin);
     }
 
     syncHeader(header);
