@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gemini-chatgpt-ui
 // @namespace    https://github.com/dandibbert/gemini-chatgpt-ui
-// @version      0.2.4
+// @version      0.2.5
 // @description  Restyle Google Gemini web UI to look and feel like ChatGPT (clean layout, typography, 768px column, compact bubbles, ChatGPT sidebar & composer, dark/light support)
 // @author       dandibbert
 // @match        https://gemini.google.com/*
@@ -30,6 +30,7 @@ body.light-theme,
   --cg-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --cg-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --cg-col-width: 768px;
+  --cg-color-scheme: light;
 
   --cg-bg-main: #ffffff;
   --cg-bg-sidebar: #f9f9f9;
@@ -70,6 +71,7 @@ body.light-theme,
 
 body.dark-theme,
 .theme-host.dark-theme {
+  --cg-color-scheme: dark;
   --cg-bg-main: #212121;
   --cg-bg-sidebar: #171717;
   --cg-bg-elevated: #303030;
@@ -344,6 +346,72 @@ bard-sidenav mat-action-list.desktop-controls {
 
 top-bar-actions {
   z-index: 15 !important;
+}
+
+/* ==========================================================================
+   Developer Mode split view
+   ========================================================================== */
+dev-mode-side-panel.right-panel {
+  color-scheme: var(--cg-color-scheme);
+  --lumi-sys-color--surface: var(--cg-bg-sidebar);
+  --lumi-sys-color--surface-background: var(--cg-bg-sidebar);
+  --lumi-sys-color--surface-dim: var(--cg-bg-bubble);
+  --lumi-sys-color--surface-bright: var(--cg-bg-elevated);
+  --lumi-sys-color--on-surface: var(--cg-text);
+  --lumi-sys-color--on-surface-variant: var(--cg-text-muted);
+  --lumi-sys-color--on-surface-low: var(--cg-border);
+  --lumi-sys-color--code-background: var(--cg-bg-code);
+  --lumi-sys-color--code-primary-text: var(--cg-text);
+  --lumi-sys-color--error: light-dark(#b3261e, #ff4c45);
+  --lumi-sys-color--positive: light-dark(#126b3a, #0ebc5f);
+  --lumi-sys-color-states--hover-on-surface: var(--cg-bg-hover);
+  --lumi-sys-color-states--focus-on-surface: var(--cg-bg-active);
+  --lumi-sys-color-states--pressed-on-surface: var(--cg-bg-active);
+  --gem-sys-color--primary: light-dark(#0b57d0, #a8c7fa);
+  --gem-sys-color--on-surface: var(--cg-text);
+  --gem-sys-color--on-surface-variant: var(--cg-text-muted);
+  --gem-sys-color--outline-variant: var(--cg-border-strong);
+}
+
+dev-mode-side-panel dev-mode-topbar {
+  margin-block-start: var(--cg-dev-toolbar-offset, 0px);
+}
+
+#${HEADER_ID}[data-cg-developer-mode] .cg-header-right {
+  flex-shrink: 0;
+}
+
+#${HEADER_ID}[data-cg-compact] .cg-header-right,
+#${HEADER_ID}[data-cg-compact] .cg-chat-title {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  #${HEADER_ID}[data-cg-developer-mode] {
+    display: none;
+  }
+
+  chat-window.dev-mode-panel-open.side-by-side-mode:not(.mobile-device):not(.is-full-screen) {
+    grid-template:
+      "chat" minmax(0, 1fr)
+      "immersive" minmax(0, 1fr)
+      / minmax(0, 1fr) !important;
+    gap: 0;
+  }
+
+  chat-window.dev-mode-panel-open.side-by-side-mode:not(.mobile-device):not(.is-full-screen) > dev-mode-side-panel {
+    box-sizing: border-box;
+    width: 100% !important;
+    min-width: 0;
+    max-width: none;
+    min-height: 0;
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--cg-border-strong);
+  }
+
+  chat-window.dev-mode-panel-open.side-by-side-mode:not(.mobile-device):not(.is-full-screen) > dev-mode-side-panel .resize-handle {
+    display: none;
+  }
 }
 
 /* ==========================================================================
@@ -884,14 +952,32 @@ back-to-bottom-fab button.back-to-bottom-fab {
     }
 
     const topBar = document.querySelector("top-bar-actions");
-    const topBarW = topBar ? Math.ceil(topBar.getBoundingClientRect().width) : 48;
-
+    const topBarRect = topBar?.getBoundingClientRect();
     const chatWin = document.querySelector("chat-window");
-    if (chatWin) {
-      const rect = chatWin.getBoundingClientRect();
-      header.style.left = `${Math.round(rect.left)}px`;
-      header.style.width = `${Math.max(200, Math.round(rect.width) - topBarW - 10)}px`;
+    const devPanel = chatWin?.querySelector(":scope > dev-mode-side-panel.is-open");
+    const devChat = devPanel ? chatWin.querySelector(":scope > .chat-container") : null;
+
+    if (devPanel) {
+      const panelRect = devPanel.getBoundingClientRect();
+      // Keep Gemini's fixed toolbar clear of the Developer Mode buttons.
+      const overlaps = topBarRect && topBarRect.left < panelRect.right && topBarRect.right > panelRect.left;
+      const offset = overlaps ? Math.max(0, Math.ceil(topBarRect.bottom - panelRect.top)) : 0;
+      devPanel.style.setProperty("--cg-dev-toolbar-offset", `${offset}px`);
     }
+
+    if (chatWin) {
+      const rect = (devChat || chatWin).getBoundingClientRect();
+      const toolbarInChat = topBarRect && topBarRect.bottom > rect.top && topBarRect.left > rect.left;
+      const right = devChat
+        ? Math.min(rect.right, toolbarInChat ? topBarRect.left : rect.right)
+        : rect.right - (topBarRect ? Math.ceil(topBarRect.width) : 48);
+      const width = Math.max(devChat ? 0 : 200, Math.floor(right - rect.left) - 10);
+      header.style.left = `${Math.round(rect.left)}px`;
+      header.style.top = devChat ? `${Math.max(0, Math.round(rect.top))}px` : "";
+      header.style.width = `${width}px`;
+      header.toggleAttribute("data-cg-compact", !!devChat && width < 320);
+    }
+    header.toggleAttribute("data-cg-developer-mode", !!devChat);
     header.style.paddingRight = "10px";
 
     const rawTitle = document.title.replace(/\s*[-–|]\s*Google Gemini$/i, "").trim();
@@ -917,7 +1003,8 @@ back-to-bottom-fab button.back-to-bottom-fab {
 
   let observedTopBar = null;
   let observedChatWin = null;
-  let topBarObserver = null;
+  let observedChatColumn = null;
+  let layoutObserver = null;
   let resizeBound = false;
 
   function ensureHeader() {
@@ -994,16 +1081,20 @@ back-to-bottom-fab button.back-to-bottom-fab {
     }
 
     const topBar = document.querySelector("top-bar-actions");
-    if ((topBar !== observedTopBar || chatWin !== observedChatWin) && typeof ResizeObserver !== "undefined") {
+    const chatColumn = chatWin.querySelector(":scope > .chat-container");
+    if ((topBar !== observedTopBar || chatWin !== observedChatWin || chatColumn !== observedChatColumn) &&
+        typeof ResizeObserver !== "undefined") {
       observedTopBar = topBar;
       observedChatWin = chatWin;
-      topBarObserver?.disconnect();
-      topBarObserver = new ResizeObserver(() => {
+      observedChatColumn = chatColumn;
+      layoutObserver?.disconnect();
+      layoutObserver = new ResizeObserver(() => {
         const h = document.getElementById(HEADER_ID);
         if (h) syncHeader(h);
       });
-      if (topBar) topBarObserver.observe(topBar);
-      topBarObserver.observe(chatWin);
+      if (topBar) layoutObserver.observe(topBar);
+      layoutObserver.observe(chatWin);
+      if (chatColumn) layoutObserver.observe(chatColumn);
     }
 
     syncHeader(header);
@@ -1015,8 +1106,10 @@ back-to-bottom-fab button.back-to-bottom-fab {
     ensureHeader();
 
     let rafPending = false;
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((records) => {
       if (rafPending) return;
+      const header = document.getElementById(HEADER_ID);
+      if (header && records.every(({ target }) => header.contains(target))) return;
       rafPending = true;
       requestAnimationFrame(() => {
         rafPending = false;
