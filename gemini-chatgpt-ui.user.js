@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gemini-chatgpt-ui
 // @namespace    https://github.com/dandibbert/gemini-chatgpt-ui
-// @version      0.2.5
+// @version      0.2.6
 // @description  Restyle Google Gemini web UI to look and feel like ChatGPT (clean layout, typography, 768px column, compact bubbles, ChatGPT sidebar & composer, dark/light support)
 // @author       dandibbert
 // @match        https://gemini.google.com/*
@@ -19,6 +19,10 @@
   const HEADER_ID = "cg-chatgpt-header";
   const STORAGE_WIDE = "cg_gemini_wide_mode";
   const STORAGE_CLEAN_NAV = "cg_gemini_clean_sidebar";
+  const CHAT_SELECTION_PREFIX = "cg_gemini_chat_selection:";
+  const CHAT_PICKER = 'bard-mode-switcher button[data-test-id="bard-mode-menu-button"]';
+  const THINKING_TRIGGER = ':scope > gem-menu-item[value="thinking_level"]';
+  const RESTORING_CHAT_SELECTION = "cg-restoring-chat-selection";
 
   const CSS = `
 /* ==========================================================================
@@ -875,6 +879,11 @@ bard-mode-switcher button.input-area-switch:hover {
   color: var(--cg-text) !important;
 }
 
+/* Hide the native picker while restoring its selections in the background. */
+html.${RESTORING_CHAT_SELECTION} gem-menu[data-test-id="gem-mode-menu"] {
+  visibility: hidden !important;
+}
+
 /* ChatGPT iconic circular send button */
 input-area-v2 .send-button-container .send-button:not([disabled]) {
   background-color: var(--cg-send-bg) !important;
@@ -1100,28 +1109,217 @@ back-to-bottom-fab button.back-to-bottom-fab {
     syncHeader(header);
   }
 
+  function getChatContext() {
+    const path = location.pathname;
+    const route = path.match(/^\/(?:u\/(\d+)\/)?(app(?:\/([^/]+))?|devmode)\/?$/);
+    const picker = route && document.querySelector(CHAT_PICKER);
+    if (!picker || picker.disabled || picker.getAttribute("aria-disabled") === "true") return null;
+
+    const channel = picker.closest("input-container")?.querySelector(".gem-segmented-button-row-channel");
+    const chat = channel?.querySelector('gem-segmented-button[data-value="0"] button');
+    if (channel && chat?.getAttribute("aria-pressed") !== "true") return null;
+
+    const historyExpected = route[2] === "devmode" ? null : Boolean(route[3]);
+    return { path, picker, historyExpected, key: CHAT_SELECTION_PREFIX + (route[1] || "0") };
+  }
+
+  function sameChatContext(a, b) {
+    return a?.path === b?.path && a?.picker === b?.picker;
+  }
+
+  function readChatSelection(key) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(key));
+      return {
+        model: typeof saved?.model === "string" ? saved.model : "",
+        thinking: typeof saved?.thinking === "string" ? saved.thinking : "",
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  function controlledMenu(trigger) {
+    const id = trigger?.getAttribute("aria-controls");
+    return id ? document.getElementById(id) : null;
+  }
+
+  function pickerMenu(picker) {
+    const menu = controlledMenu(picker);
+    return menu?.dataset.testId === "gem-mode-menu" ? menu : null;
+  }
+
+  function thinkingLabel(option) {
+    return option.querySelector(".label")?.textContent.trim();
+  }
+
+  function rememberChatSelection(event) {
+    // Gemini handles Enter/Space on its custom items by dispatching a synthetic click.
+    if (!event.isTrusted || (event.type === "keydown" && !["Enter", " "].includes(event.key))) return;
+    const option = event.target instanceof Element ? event.target.closest('gem-menu-item[role="menuitemradio"]') : null;
+    if (!option || option.getAttribute("aria-disabled") === "true") return;
+
+    const context = getChatContext();
+    if (!context || context.picker.getAttribute("aria-expanded") !== "true") return;
+    const menu = pickerMenu(context.picker);
+    if (!menu) return;
+
+    const selection = readChatSelection(context.key);
+    if (option.parentElement === menu && option.dataset.modeId) {
+      selection.model = option.dataset.modeId;
+    } else if (option.parentElement === controlledMenu(menu.querySelector(THINKING_TRIGGER))) {
+      const model = menu.querySelector(':scope > [data-mode-id][aria-checked="true"]')?.dataset.modeId;
+      const thinking = thinkingLabel(option);
+      if (!model || !thinking) return;
+      selection.model = model;
+      selection.thinking = thinking;
+    } else {
+      return;
+    }
+    localStorage.setItem(context.key, JSON.stringify(selection));
+  }
+
+  async function waitForPicker(read, isCurrent) {
+    for (let attempt = 0; attempt < 20 && isCurrent(); attempt++) {
+      const result = read();
+      if (result) return result;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return null;
+  }
+
+  async function restoreChatSelection(context, selection) {
+    const { picker } = context;
+    const root = document.documentElement;
+    const previousFocus = document.activeElement;
+    let interrupted = false;
+    let userOpeningPicker = false;
+    const isOpen = () => picker.getAttribute("aria-expanded") === "true";
+    const interrupt = event => {
+      if (!event.isTrusted || interrupted) return;
+
+      interrupted = true;
+      const target = event.target;
+      userOpeningPicker = target instanceof Element &&
+        (picker.contains(target) || !!target.closest(`#${HEADER_ID} [data-cg-action="model"]`));
+      if (picker.isConnected && isOpen()) picker.click();
+    };
+    const stillHere = () => sameChatContext(context, getChatContext());
+    const isCurrent = () => !interrupted && stillHere();
+    const openMenu = async () => {
+      picker.click();
+      return waitForPicker(() => {
+        const menu = pickerMenu(picker);
+        return isOpen() && menu?.querySelector(':scope > [data-mode-id]') ? menu : null;
+      }, isCurrent);
+    };
+    const chooseModel = menu => [...menu.querySelectorAll(':scope > [data-mode-id]')]
+      .find(option => option.dataset.modeId === selection.model && option.getAttribute("aria-disabled") !== "true");
+
+    document.addEventListener("pointerdown", interrupt, true);
+    document.addEventListener("keydown", interrupt, true);
+    root.classList.add(RESTORING_CHAT_SELECTION);
+    try {
+      let menu = await openMenu();
+      if (!menu || !isCurrent()) return;
+
+      const model = chooseModel(menu);
+      if (!model) return;
+      if (model.getAttribute("aria-checked") !== "true") {
+        model.click();
+        const closed = await waitForPicker(() => !isOpen(), isCurrent);
+        if (!closed || !selection.thinking || !isCurrent()) return;
+        menu = await openMenu();
+        if (!menu || chooseModel(menu)?.getAttribute("aria-checked") !== "true" || !isCurrent()) return;
+      }
+
+      if (!selection.thinking) return;
+      const opener = menu.querySelector(THINKING_TRIGGER);
+      if (!opener || opener.getAttribute("aria-disabled") === "true") return;
+      // Gemini mounts this submenu before it is shown, so the level can be selected directly.
+      const levels = await waitForPicker(() => controlledMenu(opener), isCurrent);
+      const level = levels && [...levels.querySelectorAll(':scope > [role="menuitemradio"]')].find(option =>
+        thinkingLabel(option) === selection.thinking && option.getAttribute("aria-disabled") !== "true"
+      );
+      if (level && level.getAttribute("aria-checked") !== "true" && isCurrent()) {
+        level.click();
+        await waitForPicker(() => !isOpen(), isCurrent);
+      }
+    } finally {
+      if (!userOpeningPicker && picker.isConnected && isOpen()) {
+        picker.click();
+        await waitForPicker(() => !isOpen(), () => !interrupted && picker.isConnected);
+      }
+      root.classList.remove(RESTORING_CHAT_SELECTION);
+      document.removeEventListener("pointerdown", interrupt, true);
+      document.removeEventListener("keydown", interrupt, true);
+      const focus = document.activeElement;
+      if (!interrupted && stillHere() && (focus === picker || focus === document.body) &&
+          previousFocus instanceof HTMLElement && previousFocus.isConnected && previousFocus !== focus) {
+        if (previousFocus === document.body) picker.blur();
+        else previousFocus.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  let lastChatContext = null;
+  let restoringChatSelection = false;
+
+  function maybeRestoreChatSelection() {
+    const context = getChatContext();
+    if (!context) {
+      lastChatContext = null;
+      return;
+    }
+    if (restoringChatSelection || sameChatContext(context, lastChatContext)) return;
+    // Gemini can reuse the composer while it loads or clears the previous chat.
+    const hasHistory = !!context.picker.closest("chat-window")?.querySelector(".conversation-container");
+    if (context.historyExpected !== null && hasHistory !== context.historyExpected) return;
+
+    lastChatContext = context;
+    const selection = readChatSelection(context.key);
+    if (!selection.model || context.picker.getAttribute("aria-expanded") === "true") return;
+
+    restoringChatSelection = true;
+    restoreChatSelection(context, selection).finally(() => {
+      restoringChatSelection = false;
+      maybeRestoreChatSelection();
+    });
+  }
+
   function boot() {
     applyPreferences();
     injectStyle();
     ensureHeader();
+    maybeRestoreChatSelection();
+    document.addEventListener("click", rememberChatSelection, true);
+    document.addEventListener("keydown", rememberChatSelection, true);
 
     let rafPending = false;
-    const observer = new MutationObserver((records) => {
+    function scheduleUpdate() {
       if (rafPending) return;
-      const header = document.getElementById(HEADER_ID);
-      if (header && records.every(({ target }) => header.contains(target))) return;
       rafPending = true;
       requestAnimationFrame(() => {
         rafPending = false;
         injectStyle();
         ensureHeader();
+        maybeRestoreChatSelection();
       });
-    });
+    }
 
+    const observer = new MutationObserver((records) => {
+      const header = document.getElementById(HEADER_ID);
+      if (header && records.every(({ target }) => header.contains(target))) return;
+      scheduleUpdate();
+    });
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
+      attributes: true,
+      attributeFilter: ["aria-pressed"],
     });
+    window.addEventListener("popstate", scheduleUpdate);
+    window.navigation?.addEventListener("currententrychange", scheduleUpdate);
   }
 
   if (document.documentElement) {
