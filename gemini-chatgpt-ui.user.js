@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gemini-chatgpt-ui
 // @namespace    https://github.com/dandibbert/gemini-chatgpt-ui
-// @version      0.2.6
+// @version      0.2.7
 // @description  Restyle Google Gemini web UI to look and feel like ChatGPT (clean layout, typography, 768px column, compact bubbles, ChatGPT sidebar & composer, dark/light support)
 // @author       dandibbert
 // @match        https://gemini.google.com/*
@@ -1114,6 +1114,8 @@ back-to-bottom-fab button.back-to-bottom-fab {
     const route = path.match(/^\/(?:u\/(\d+)\/)?(app(?:\/([^/]+))?|devmode)\/?$/);
     const picker = route && document.querySelector(CHAT_PICKER);
     if (!picker || picker.disabled || picker.getAttribute("aria-disabled") === "true") return null;
+    // Task conversations can keep the model picker without the Chat/Task switch.
+    if (picker.closest("chat-window.is-remy-mode")) return null;
 
     const channel = picker.closest("input-container")?.querySelector(".gem-segmented-button-row-channel");
     const chat = channel?.querySelector('gem-segmented-button[data-value="0"] button');
