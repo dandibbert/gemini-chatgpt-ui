@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gemini-chatgpt-ui
 // @namespace    https://github.com/dandibbert/gemini-chatgpt-ui
-// @version      0.2.7
+// @version      0.3.0
 // @description  Restyle Google Gemini web UI to look and feel like ChatGPT (clean layout, typography, 768px column, compact bubbles, ChatGPT sidebar & composer, dark/light support)
 // @author       dandibbert
 // @match        https://gemini.google.com/*
@@ -19,10 +19,12 @@
   const HEADER_ID = "cg-chatgpt-header";
   const STORAGE_WIDE = "cg_gemini_wide_mode";
   const STORAGE_CLEAN_NAV = "cg_gemini_clean_sidebar";
-  const CHAT_SELECTION_PREFIX = "cg_gemini_chat_selection:";
-  const CHAT_PICKER = 'bard-mode-switcher button[data-test-id="bard-mode-menu-button"]';
+  const SELECTION_PREFIX = "cg_gemini_model_preferences:";
+  const SELECTION_ROUTE = /^\/(?:u\/(\d+)\/)?app(?:\/([^/]+))?\/?$/;
+  const PROMPT_EDITOR = '.ql-editor[contenteditable="true"]';
+  const MODEL_PICKER = 'bard-mode-switcher button[data-test-id="bard-mode-menu-button"]';
   const THINKING_TRIGGER = ':scope > gem-menu-item[value="thinking_level"]';
-  const RESTORING_CHAT_SELECTION = "cg-restoring-chat-selection";
+  const RESTORING_SELECTION = "cg-restoring-chat-selection";
 
   const CSS = `
 /* ==========================================================================
@@ -880,7 +882,7 @@ bard-mode-switcher button.input-area-switch:hover {
 }
 
 /* Hide the native picker while restoring its selections in the background. */
-html.${RESTORING_CHAT_SELECTION} gem-menu[data-test-id="gem-mode-menu"] {
+html.${RESTORING_SELECTION} gem-menu[data-test-id="gem-mode-menu"] {
   visibility: hidden !important;
 }
 
@@ -1109,27 +1111,41 @@ back-to-bottom-fab button.back-to-bottom-fab {
     syncHeader(header);
   }
 
-  function getChatContext() {
+  function getSelectionContext() {
     const path = location.pathname;
-    const route = path.match(/^\/(?:u\/(\d+)\/)?(app(?:\/([^/]+))?|devmode)\/?$/);
-    const picker = route && document.querySelector(CHAT_PICKER);
-    if (!picker || picker.disabled || picker.getAttribute("aria-disabled") === "true") return null;
-    // Task conversations can keep the model picker without the Chat/Task switch.
-    if (picker.closest("chat-window.is-remy-mode")) return null;
+    const route = path.match(SELECTION_ROUTE);
+    const chatWindow = route && document.querySelector("chat-window");
+    if (!chatWindow) return null;
 
-    const channel = picker.closest("input-container")?.querySelector(".gem-segmented-button-row-channel");
-    const chat = channel?.querySelector('gem-segmented-button[data-value="0"] button');
-    if (channel && chat?.getAttribute("aria-pressed") !== "true") return null;
-
-    const historyExpected = route[2] === "devmode" ? null : Boolean(route[3]);
-    return { path, picker, historyExpected, key: CHAT_SELECTION_PREFIX + (route[1] || "0") };
+    const [, account = "0", conversation] = route;
+    const taskSelected = chatWindow.classList.contains("is-remy-mode") || !!chatWindow.querySelector(
+      '.gem-segmented-button-row-channel gem-segmented-button[data-value="40"] button[aria-pressed="true"]'
+    );
+    const mode = taskSelected ? "task" : "chat";
+    const scope = conversation ? `conversation:${conversation}` : "default";
+    const turn = chatWindow.querySelector(".conversation-container");
+    return {
+      path, account, mode, conversation, chatWindow, turn, turnId: turn?.id,
+      key: `${SELECTION_PREFIX}${account}:${mode}:${scope}`,
+      picker: chatWindow.querySelector(MODEL_PICKER),
+    };
   }
 
-  function sameChatContext(a, b) {
-    return a?.path === b?.path && a?.picker === b?.picker;
+  let lastSelectionContext = null;
+  let pendingConversation = null;
+
+  function isSelectionReady(context) {
+    if (!!context.turn !== !!context.conversation) return false;
+    // The old transcript can remain visible while Gemini navigates to another conversation.
+    return !context.turn || !lastSelectionContext?.turn || context.path === lastSelectionContext.path ||
+      context.turn !== lastSelectionContext.turn || context.turnId !== lastSelectionContext.turnId;
   }
 
-  function readChatSelection(key) {
+  function sameSelectionContext(a, b) {
+    return a?.key === b?.key && a?.picker === b?.picker;
+  }
+
+  function readSelection(key) {
     try {
       const saved = JSON.parse(localStorage.getItem(key));
       return {
@@ -1139,6 +1155,66 @@ back-to-bottom-fab button.back-to-bottom-fab {
     } catch {
       return {};
     }
+  }
+
+  function saveSelection(key, selection) {
+    localStorage.setItem(key, JSON.stringify(selection));
+  }
+
+  function normalizePrompt(text) {
+    return text.replace(/\s+/g, " ").trim();
+  }
+
+  function trackNewConversation(event) {
+    const target = event.target;
+    if (!event.isTrusted || !(target instanceof Element)) return;
+
+    const composer = target.closest("input-container");
+    if (!composer) {
+      if (event.type === "click") pendingConversation = null;
+      return;
+    }
+    const send = composer.querySelector('.send-button.submit:not([disabled]):not([aria-disabled="true"])');
+    if (!send || send.querySelector('button:disabled, button[aria-disabled="true"]')) return;
+    const sending = event.type === "click"
+      ? send.contains(target)
+      : event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey &&
+        !event.isComposing && !event.repeat && !!target.closest(PROMPT_EDITOR);
+    if (!sending) return;
+
+    const context = getSelectionContext();
+    if (!context || context.conversation || context.turn || !context.chatWindow.contains(composer)) return;
+    const prompt = normalizePrompt(composer.querySelector(PROMPT_EDITOR)?.innerText || "");
+    pendingConversation = prompt ? {
+      account: context.account,
+      mode: context.mode,
+      selection: readSelection(context.key),
+      prompt,
+      time: Date.now(),
+    } : null;
+  }
+
+  function matchNewConversation(context) {
+    const pending = pendingConversation;
+    if (!pending) return null;
+    if (pending.key === context.key) return pending;
+    if (pending.key || Date.now() - pending.time > 60_000 || pending.account !== context.account) {
+      pendingConversation = null;
+      return null;
+    }
+    if (!context.conversation) return null;
+
+    const lines = context.turn.querySelectorAll("user-query .query-text-line");
+    const prompt = normalizePrompt([...lines].map(line => line.innerText).join(" "));
+    if (!prompt) return null;
+    // Recognize the submitted draft so a failed send cannot seed an unrelated historical chat.
+    if (pending.mode !== context.mode || pending.prompt !== prompt) {
+      pendingConversation = null;
+      return null;
+    }
+    pending.key = context.key;
+    pending.prompt = "";
+    return pending;
   }
 
   function controlledMenu(trigger) {
@@ -1155,22 +1231,34 @@ back-to-bottom-fab button.back-to-bottom-fab {
     return option.querySelector(".label")?.textContent.trim();
   }
 
-  function rememberChatSelection(event) {
+  function selectedModel(menu) {
+    return menu.querySelector(':scope > [data-mode-id][aria-checked="true"]')?.dataset.modeId;
+  }
+
+  function selectedThinking(menu) {
+    const levels = controlledMenu(menu.querySelector(THINKING_TRIGGER));
+    const selected = levels?.querySelector(':scope > [role="menuitemradio"][aria-checked="true"]');
+    return selected && thinkingLabel(selected);
+  }
+
+  function rememberSelection(event) {
     // Gemini handles Enter/Space on its custom items by dispatching a synthetic click.
     if (!event.isTrusted || (event.type === "keydown" && !["Enter", " "].includes(event.key))) return;
     const option = event.target instanceof Element ? event.target.closest('gem-menu-item[role="menuitemradio"]') : null;
     if (!option || option.getAttribute("aria-disabled") === "true") return;
 
-    const context = getChatContext();
-    if (!context || context.picker.getAttribute("aria-expanded") !== "true") return;
+    const context = getSelectionContext();
+    if (!context || !isSelectionReady(context) || context.picker?.getAttribute("aria-expanded") !== "true") return;
     const menu = pickerMenu(context.picker);
     if (!menu) return;
 
-    const selection = readChatSelection(context.key);
+    const selection = readSelection(context.key);
     if (option.parentElement === menu && option.dataset.modeId) {
+      if (option.dataset.modeId.startsWith("upsell_")) return;
       selection.model = option.dataset.modeId;
+      selection.thinking = selectedThinking(menu) || selection.thinking;
     } else if (option.parentElement === controlledMenu(menu.querySelector(THINKING_TRIGGER))) {
-      const model = menu.querySelector(':scope > [data-mode-id][aria-checked="true"]')?.dataset.modeId;
+      const model = selectedModel(menu);
       const thinking = thinkingLabel(option);
       if (!model || !thinking) return;
       selection.model = model;
@@ -1178,7 +1266,7 @@ back-to-bottom-fab button.back-to-bottom-fab {
     } else {
       return;
     }
-    localStorage.setItem(context.key, JSON.stringify(selection));
+    saveSelection(context.key, selection);
   }
 
   async function waitForPicker(read, isCurrent) {
@@ -1190,7 +1278,7 @@ back-to-bottom-fab button.back-to-bottom-fab {
     return null;
   }
 
-  async function restoreChatSelection(context, selection) {
+  async function syncPickerSelection(context, selection) {
     const { picker } = context;
     const root = document.documentElement;
     const previousFocus = document.activeElement;
@@ -1206,7 +1294,7 @@ back-to-bottom-fab button.back-to-bottom-fab {
         (picker.contains(target) || !!target.closest(`#${HEADER_ID} [data-cg-action="model"]`));
       if (picker.isConnected && isOpen()) picker.click();
     };
-    const stillHere = () => sameChatContext(context, getChatContext());
+    const stillHere = () => sameSelectionContext(context, getSelectionContext());
     const isCurrent = () => !interrupted && stillHere();
     const openMenu = async () => {
       picker.click();
@@ -1216,14 +1304,24 @@ back-to-bottom-fab button.back-to-bottom-fab {
       }, isCurrent);
     };
     const chooseModel = menu => [...menu.querySelectorAll(':scope > [data-mode-id]')]
-      .find(option => option.dataset.modeId === selection.model && option.getAttribute("aria-disabled") !== "true");
+      .find(option => option.dataset.modeId === selection.model && !option.dataset.modeId.startsWith("upsell_") &&
+        option.getAttribute("aria-disabled") !== "true");
 
     document.addEventListener("pointerdown", interrupt, true);
     document.addEventListener("keydown", interrupt, true);
-    root.classList.add(RESTORING_CHAT_SELECTION);
+    root.classList.add(RESTORING_SELECTION);
     try {
       let menu = await openMenu();
       if (!menu || !isCurrent()) return;
+
+      if (!selection.model) {
+        const model = selectedModel(menu);
+        if (!model) return;
+        const opener = menu.querySelector(THINKING_TRIGGER);
+        if (opener) await waitForPicker(() => controlledMenu(opener), isCurrent);
+        if (isCurrent()) saveSelection(context.key, { model, thinking: selectedThinking(menu) || "" });
+        return;
+      }
 
       const model = chooseModel(menu);
       if (!model) return;
@@ -1252,7 +1350,7 @@ back-to-bottom-fab button.back-to-bottom-fab {
         picker.click();
         await waitForPicker(() => !isOpen(), () => !interrupted && picker.isConnected);
       }
-      root.classList.remove(RESTORING_CHAT_SELECTION);
+      root.classList.remove(RESTORING_SELECTION);
       document.removeEventListener("pointerdown", interrupt, true);
       document.removeEventListener("keydown", interrupt, true);
       const focus = document.activeElement;
@@ -1264,28 +1362,36 @@ back-to-bottom-fab button.back-to-bottom-fab {
     }
   }
 
-  let lastChatContext = null;
-  let restoringChatSelection = false;
+  let synchronizingSelection = false;
 
-  function maybeRestoreChatSelection() {
-    const context = getChatContext();
+  function maybeSyncSelection() {
+    const context = getSelectionContext();
     if (!context) {
-      lastChatContext = null;
+      lastSelectionContext = null;
+      if (!SELECTION_ROUTE.test(location.pathname)) pendingConversation = null;
       return;
     }
-    if (restoringChatSelection || sameChatContext(context, lastChatContext)) return;
-    // Gemini can reuse the composer while it loads or clears the previous chat.
-    const hasHistory = !!context.picker.closest("chat-window")?.querySelector(".conversation-container");
-    if (context.historyExpected !== null && hasHistory !== context.historyExpected) return;
+    if (synchronizingSelection || !isSelectionReady(context) ||
+        (!pendingConversation && sameSelectionContext(context, lastSelectionContext))) return;
 
-    lastChatContext = context;
-    const selection = readChatSelection(context.key);
-    if (!selection.model || context.picker.getAttribute("aria-expanded") === "true") return;
+    let selection = readSelection(context.key);
+    const creation = matchNewConversation(context);
+    if (!selection.model && creation?.selection.model) {
+      selection = creation.selection;
+      saveSelection(context.key, selection);
+    }
+    const { picker } = context;
+    if (!picker || picker.disabled || picker.getAttribute("aria-disabled") === "true") return;
+    if (!creation && sameSelectionContext(context, lastSelectionContext)) return;
 
-    restoringChatSelection = true;
-    restoreChatSelection(context, selection).finally(() => {
-      restoringChatSelection = false;
-      maybeRestoreChatSelection();
+    lastSelectionContext = context;
+    if (creation) pendingConversation = null;
+    if ((!selection.model && !creation) || picker.getAttribute("aria-expanded") === "true") return;
+
+    synchronizingSelection = true;
+    syncPickerSelection(context, selection).finally(() => {
+      synchronizingSelection = false;
+      maybeSyncSelection();
     });
   }
 
@@ -1293,9 +1399,11 @@ back-to-bottom-fab button.back-to-bottom-fab {
     applyPreferences();
     injectStyle();
     ensureHeader();
-    maybeRestoreChatSelection();
-    document.addEventListener("click", rememberChatSelection, true);
-    document.addEventListener("keydown", rememberChatSelection, true);
+    maybeSyncSelection();
+    document.addEventListener("click", rememberSelection, true);
+    document.addEventListener("keydown", rememberSelection, true);
+    document.addEventListener("click", trackNewConversation, true);
+    document.addEventListener("keydown", trackNewConversation, true);
 
     let rafPending = false;
     function scheduleUpdate() {
@@ -1305,22 +1413,28 @@ back-to-bottom-fab button.back-to-bottom-fab {
         rafPending = false;
         injectStyle();
         ensureHeader();
-        maybeRestoreChatSelection();
+        maybeSyncSelection();
       });
     }
 
     const observer = new MutationObserver((records) => {
       const header = document.getElementById(HEADER_ID);
-      if (header && records.every(({ target }) => header.contains(target))) return;
-      scheduleUpdate();
+      const relevant = records.some(({ target, type }) =>
+        !header?.contains(target) && (type === "childList" ||
+          target.matches(`${MODEL_PICKER}, .gem-segmented-button-row-channel button`))
+      );
+      if (relevant) scheduleUpdate();
     });
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["aria-pressed"],
+      attributeFilter: ["aria-pressed", "aria-disabled", "disabled"],
     });
-    window.addEventListener("popstate", scheduleUpdate);
+    window.addEventListener("popstate", () => {
+      pendingConversation = null;
+      scheduleUpdate();
+    });
     window.navigation?.addEventListener("currententrychange", scheduleUpdate);
   }
 
